@@ -1,0 +1,695 @@
+// FreshFold LMS — Prisma schema (authoritative, from SRS Section 12)
+// Engine: PostgreSQL 15. Money in *_paise (BigInt). Timestamps UTC.
+// Multi-tenant: tenantId on every tenant-owned model. Enforce RLS + DAL scoping.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========================= TENANCY & IDENTITY =========================
+
+model Tenant {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  status    String   @default("active") // active|suspended
+  timezone  String   @default("Asia/Kolkata")
+  currency  String   @default("INR")
+  gstin     String?
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  users         User[]
+  clients       Client[]
+  roles         Role[]
+  subscriptions TenantSubscription[]
+
+  @@map("tenants")
+}
+
+model Plan {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  pricePaise  BigInt   @map("price_paise")
+  maxClients  Int?     @map("max_clients")
+  features    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  subscriptions TenantSubscription[]
+
+  @@map("plans")
+}
+
+model TenantSubscription {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  planId           String   @map("plan_id") @db.Uuid
+  status           String   @default("active")
+  currentPeriodEnd DateTime? @map("current_period_end")
+  createdAt        DateTime @default(now()) @map("created_at")
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  plan   Plan   @relation(fields: [planId], references: [id])
+
+  @@map("tenant_subscriptions")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String?  @map("tenant_id") @db.Uuid
+  fullName     String   @map("full_name")
+  email        String?
+  phone        String?
+  passwordHash String?  @map("password_hash")
+  status       String   @default("active")
+  isSuperAdmin Boolean  @default(false) @map("is_super_admin")
+  lastLoginAt  DateTime? @map("last_login_at")
+  totpSecret   String?  @map("totp_secret")
+  clientId     String?  @map("client_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  tenant        Tenant?         @relation(fields: [tenantId], references: [id])
+  userRoles     UserRole[]
+  refreshTokens RefreshToken[]
+
+  @@unique([tenantId, email])
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+  @@map("users")
+}
+
+model Role {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String? @map("tenant_id") @db.Uuid
+  code     String // ADMIN|DELIVERY|TAGGER|PACKER|CLIENT|SUPER_ADMIN
+  name     String
+  tenant   Tenant? @relation(fields: [tenantId], references: [id])
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@unique([tenantId, code])
+  @@map("roles")
+}
+
+model Permission {
+  id          String @id @default(uuid()) @db.Uuid
+  code        String @unique // e.g. lot:tag
+  description String?
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+  role       Role       @relation(fields: [roleId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId String @map("user_id") @db.Uuid
+  roleId String @map("role_id") @db.Uuid
+  user User @relation(fields: [userId], references: [id])
+  role Role @relation(fields: [roleId], references: [id])
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  tokenHash String   @map("token_hash")
+  familyId  String   @map("family_id") @db.Uuid
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  userAgent String?  @map("user_agent")
+  ip        String?
+  createdAt DateTime @default(now()) @map("created_at")
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("refresh_tokens")
+}
+
+// ========================= CLIENTS / CONFIG =========================
+
+model Client {
+  id                  String   @id @default(uuid()) @db.Uuid
+  tenantId            String   @map("tenant_id") @db.Uuid
+  code                String
+  name                String
+  businessType        String   @map("business_type")
+  status              String   @default("active")
+  gstin               String?
+  legalName           String?  @map("legal_name")
+  billingAddress      String?  @map("billing_address")
+  address             String?
+  lat                 Float?
+  lng                 Float?
+  placeId             String?  @map("place_id")
+  mapsUrl             String?  @map("maps_url")
+  paymentTermsDays    Int      @default(30) @map("payment_terms_days")
+  billingCycle        String   @default("monthly") @map("billing_cycle")
+  billingDay          Int      @default(1) @map("billing_day")
+  creditLimitPaise    BigInt   @default(0) @map("credit_limit_paise")
+  advanceBalancePaise BigInt   @default(0) @map("advance_balance_paise")
+  defaultUnit         String   @default("item") @map("default_unit")
+  defaultTatHours     Int      @default(48) @map("default_tat_hours")
+  notes               String?
+  tags                String[]
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  deletedAt           DateTime? @map("deleted_at")
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  contacts   ClientContact[]
+  schedule   ClientSchedule?
+  rateCards  RateCard[]
+  categories Category[]
+  lots       Lot[]
+  invoices   Invoice[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@map("clients")
+}
+
+model ClientContact {
+  id        String  @id @default(uuid()) @db.Uuid
+  tenantId  String  @map("tenant_id") @db.Uuid
+  clientId  String  @map("client_id") @db.Uuid
+  name      String
+  phone     String?
+  altPhone  String? @map("alt_phone")
+  email     String?
+  isPrimary Boolean @default(true) @map("is_primary")
+  client Client @relation(fields: [clientId], references: [id])
+
+  @@map("client_contacts")
+}
+
+model ClientSchedule {
+  id                  String   @id @default(uuid()) @db.Uuid
+  tenantId            String   @map("tenant_id") @db.Uuid
+  clientId            String   @unique @map("client_id") @db.Uuid
+  pickupDays          Int[]    @map("pickup_days")
+  deliveryDays        Int[]    @map("delivery_days")
+  pickupFrequency     String?  @map("pickup_frequency")
+  deliveryFrequency   String?  @map("delivery_frequency")
+  pickupWindowStart   DateTime? @map("pickup_window_start") @db.Time
+  pickupWindowEnd     DateTime? @map("pickup_window_end") @db.Time
+  deliveryWindowStart DateTime? @map("delivery_window_start") @db.Time
+  deliveryWindowEnd   DateTime? @map("delivery_window_end") @db.Time
+  client Client @relation(fields: [clientId], references: [id])
+
+  @@map("client_schedules")
+}
+
+model RateCard {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  clientId      String   @map("client_id") @db.Uuid
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+  createdAt     DateTime @default(now()) @map("created_at")
+  client Client         @relation(fields: [clientId], references: [id])
+  items  RateCardItem[]
+
+  @@map("rate_cards")
+}
+
+model RateCardItem {
+  id         String  @id @default(uuid()) @db.Uuid
+  rateCardId String  @map("rate_card_id") @db.Uuid
+  categoryId String  @map("category_id") @db.Uuid
+  unit       String  @default("item")
+  ratePaise  BigInt  @map("rate_paise")
+  hsnCode    String? @map("hsn_code")
+  gstRate    Decimal @default(18.0) @map("gst_rate") @db.Decimal(5, 2)
+  rateCard RateCard @relation(fields: [rateCardId], references: [id])
+
+  @@map("rate_card_items")
+}
+
+model Category {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  clientId        String   @map("client_id") @db.Uuid
+  name            String
+  code            String?
+  unit            String   @default("item")
+  icon            String?
+  sortOrder       Int      @default(0) @map("sort_order")
+  washProgram     String?  @map("wash_program")
+  expectedWeightG Int?     @map("expected_weight_g")
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  client   Client    @relation(fields: [clientId], references: [id])
+  lotItems LotItem[]
+
+  @@unique([tenantId, clientId, name])
+  @@index([tenantId, clientId, active])
+  @@map("categories")
+}
+
+model WorkerAssignment {
+  id        String  @id @default(uuid()) @db.Uuid
+  tenantId  String  @map("tenant_id") @db.Uuid
+  clientId  String  @map("client_id") @db.Uuid
+  userId    String  @map("user_id") @db.Uuid
+  roleCode  String  @map("role_code") // DELIVERY|TAGGER|PACKER
+  isDefault Boolean @default(true) @map("is_default")
+
+  @@map("worker_assignments")
+}
+
+// ========================= OPERATIONS / LOTS =========================
+
+model Lot {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String   @map("tenant_id") @db.Uuid
+  clientId           String   @map("client_id") @db.Uuid
+  lotNumber          String   @map("lot_number")
+  status             String   @default("collected")
+  pickupUserId       String?  @map("pickup_user_id") @db.Uuid
+  pickupAt           DateTime? @map("pickup_at")
+  pickupLat          Float?   @map("pickup_lat")
+  pickupLng          Float?   @map("pickup_lng")
+  pickupGpsAccuracy  Decimal? @map("pickup_gps_accuracy")
+  deliveryUserId     String?  @map("delivery_user_id") @db.Uuid
+  deliveredAt        DateTime? @map("delivered_at")
+  deliveryLat        Float?   @map("delivery_lat")
+  deliveryLng        Float?   @map("delivery_lng")
+  totalPickupQty     Int      @default(0) @map("total_pickup_qty")
+  totalPackedQty     Int      @default(0) @map("total_packed_qty")
+  totalDeliveredQty  Int      @default(0) @map("total_delivered_qty")
+  tatMinutes         Int?     @map("tat_minutes")
+  slaBreached        Boolean  @default(false) @map("sla_breached")
+  hasPending         Boolean  @default(false) @map("has_pending")
+  hasDispute         Boolean  @default(false) @map("has_dispute")
+  notes              String?
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  client         Client            @relation(fields: [clientId], references: [id])
+  items          LotItem[]
+  statusHistory  LotStatusHistory[]
+  signatures     Signature[]
+  discrepancies  Discrepancy[]
+  defects        Defect[]
+  investigations Investigation[]
+
+  @@unique([tenantId, lotNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, clientId, pickupAt])
+  @@map("lots")
+}
+
+model LotItem {
+  id           String  @id @default(uuid()) @db.Uuid
+  tenantId     String  @map("tenant_id") @db.Uuid
+  lotId        String  @map("lot_id") @db.Uuid
+  categoryId   String  @map("category_id") @db.Uuid
+  pickupQty    Int     @default(0) @map("pickup_qty")
+  taggingQty   Int?    @map("tagging_qty")
+  packingQty   Int?    @map("packing_qty")
+  deliveredQty Int?    @map("delivered_qty")
+  unit         String  @default("item")
+  weightG      Int?    @map("weight_g")
+  ratePaise    BigInt? @map("rate_paise")
+  lot      Lot      @relation(fields: [lotId], references: [id])
+  category Category @relation(fields: [categoryId], references: [id])
+
+  @@unique([lotId, categoryId])
+  @@index([lotId])
+  @@map("lot_items")
+}
+
+model LotStatusHistory {
+  id                     BigInt   @id @default(autoincrement())
+  tenantId               String   @map("tenant_id") @db.Uuid
+  lotId                  String   @map("lot_id") @db.Uuid
+  status                 String
+  actorUserId            String?  @map("actor_user_id") @db.Uuid
+  machineId              String?  @map("machine_id") @db.Uuid
+  occurredAt             DateTime @default(now()) @map("occurred_at")
+  durationFromPrevMinutes Int?    @map("duration_from_prev_minutes")
+  meta                   Json     @default("{}")
+  lot Lot @relation(fields: [lotId], references: [id])
+
+  @@index([lotId, occurredAt])
+  @@map("lot_status_history")
+}
+
+model Signature {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  lotId       String   @map("lot_id") @db.Uuid
+  context     String   // pickup|delivery
+  signerRole  String   @map("signer_role") // client|delivery
+  signerName  String?  @map("signer_name")
+  mediaFileId String?  @map("media_file_id") @db.Uuid
+  signedAt    DateTime @default(now()) @map("signed_at")
+  lot Lot @relation(fields: [lotId], references: [id])
+
+  @@map("signatures")
+}
+
+model MediaFile {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  bucket      String
+  objectKey   String   @map("object_key")
+  contentType String?  @map("content_type")
+  sizeBytes   BigInt?  @map("size_bytes")
+  width       Int?
+  height      Int?
+  thumbKey    String?  @map("thumb_key")
+  uploadedBy  String?  @map("uploaded_by") @db.Uuid
+  context     String?
+  refTable    String?  @map("ref_table")
+  refId       String?  @map("ref_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("media_files")
+}
+
+model Discrepancy {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  lotId      String   @map("lot_id") @db.Uuid
+  categoryId String?  @map("category_id") @db.Uuid
+  stage      String   // pickup_vs_tag|tag_vs_pack|pack_vs_delivery
+  type       String   // missing|extra|unknown|found
+  qty        Int
+  resolved   Boolean  @default(false)
+  createdBy  String?  @map("created_by") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+  lot Lot @relation(fields: [lotId], references: [id])
+
+  @@index([lotId])
+  @@map("discrepancies")
+}
+
+model Defect {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  lotId         String   @map("lot_id") @db.Uuid
+  categoryId    String?  @map("category_id") @db.Uuid
+  type          String   // already_damaged|stained|burn|torn|color_fade|button_missing|zipper_broken|other
+  qty           Int      @default(1)
+  note          String?
+  detectedStage String?  @map("detected_stage")
+  detectedBy    String?  @map("detected_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+  lot Lot @relation(fields: [lotId], references: [id])
+
+  @@map("defects")
+}
+
+model Machine {
+  id         String  @id @default(uuid()) @db.Uuid
+  tenantId   String  @map("tenant_id") @db.Uuid
+  name       String
+  type       String? // washer|dryer|iron
+  capacityKg Int?    @map("capacity_kg")
+  status     String  @default("active")
+
+  @@map("machines")
+}
+
+// ========================= INVESTIGATIONS =========================
+
+model Investigation {
+  id                String   @id @default(uuid()) @db.Uuid
+  tenantId          String   @map("tenant_id") @db.Uuid
+  caseNumber        String   @map("case_number")
+  clientId          String   @map("client_id") @db.Uuid
+  lotId             String?  @map("lot_id") @db.Uuid
+  categoryId        String?  @map("category_id") @db.Uuid
+  qtyMissing        Int      @map("qty_missing")
+  disappearedStage  String?  @map("disappeared_stage")
+  responsibleUserId String?  @map("responsible_user_id") @db.Uuid
+  status            String   @default("open")
+  resolution        String?
+  compensationPaise BigInt   @default(0) @map("compensation_paise")
+  assignedTo        String?  @map("assigned_to") @db.Uuid
+  openedAt          DateTime @default(now()) @map("opened_at")
+  closedAt          DateTime? @map("closed_at")
+  lot    Lot?                  @relation(fields: [lotId], references: [id])
+  events InvestigationEvent[]
+
+  @@unique([tenantId, caseNumber])
+  @@index([tenantId, status])
+  @@map("investigations")
+}
+
+model InvestigationEvent {
+  id              BigInt   @id @default(autoincrement())
+  tenantId        String   @map("tenant_id") @db.Uuid
+  investigationId String   @map("investigation_id") @db.Uuid
+  actorUserId     String?  @map("actor_user_id") @db.Uuid
+  type            String?
+  message         String?
+  meta            Json     @default("{}")
+  createdAt       DateTime @default(now()) @map("created_at")
+  investigation Investigation @relation(fields: [investigationId], references: [id])
+
+  @@map("investigation_events")
+}
+
+// ========================= BILLING =========================
+
+model Invoice {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  clientId        String   @map("client_id") @db.Uuid
+  invoiceNumber   String   @map("invoice_number")
+  periodStart     DateTime? @map("period_start") @db.Date
+  periodEnd       DateTime? @map("period_end") @db.Date
+  status          String   @default("draft")
+  subtotalPaise   BigInt   @default(0) @map("subtotal_paise")
+  cgstPaise       BigInt   @default(0) @map("cgst_paise")
+  sgstPaise       BigInt   @default(0) @map("sgst_paise")
+  igstPaise       BigInt   @default(0) @map("igst_paise")
+  totalPaise      BigInt   @default(0) @map("total_paise")
+  amountPaidPaise BigInt   @default(0) @map("amount_paid_paise")
+  dueDate         DateTime? @map("due_date") @db.Date
+  pdfMediaId      String?  @map("pdf_media_id") @db.Uuid
+  issuedAt        DateTime? @map("issued_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  client   Client        @relation(fields: [clientId], references: [id])
+  lines    InvoiceLine[]
+  payments Payment[]
+
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId, clientId, status])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id             String  @id @default(uuid()) @db.Uuid
+  tenantId       String  @map("tenant_id") @db.Uuid
+  invoiceId      String  @map("invoice_id") @db.Uuid
+  lotId          String? @map("lot_id") @db.Uuid
+  categoryId     String? @map("category_id") @db.Uuid
+  description    String?
+  hsnCode        String? @map("hsn_code")
+  qty            Int?
+  unit           String?
+  ratePaise      BigInt? @map("rate_paise")
+  gstRate        Decimal? @map("gst_rate") @db.Decimal(5, 2)
+  lineTotalPaise BigInt? @map("line_total_paise")
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@map("invoice_lines")
+}
+
+model Payment {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  clientId    String   @map("client_id") @db.Uuid
+  invoiceId   String?  @map("invoice_id") @db.Uuid
+  amountPaise BigInt   @map("amount_paise")
+  mode        String   // upi|cash|bank_transfer
+  reference   String?
+  note        String?
+  receivedBy  String?  @map("received_by") @db.Uuid
+  receivedAt  DateTime @default(now()) @map("received_at")
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+
+  @@index([tenantId, clientId, receivedAt])
+  @@map("payments")
+}
+
+model CreditNote {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  clientId        String   @map("client_id") @db.Uuid
+  invoiceId       String?  @map("invoice_id") @db.Uuid
+  investigationId String?  @map("investigation_id") @db.Uuid
+  amountPaise     BigInt   @map("amount_paise")
+  reason          String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("credit_notes")
+}
+
+model LedgerEntry {
+  id           BigInt   @id @default(autoincrement())
+  tenantId     String   @map("tenant_id") @db.Uuid
+  clientId     String   @map("client_id") @db.Uuid
+  type         String   // invoice|payment|credit|advance|adjustment
+  refId        String?  @map("ref_id") @db.Uuid
+  debitPaise   BigInt   @default(0) @map("debit_paise")
+  creditPaise  BigInt   @default(0) @map("credit_paise")
+  balancePaise BigInt?  @map("balance_paise")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("ledger_entries")
+}
+
+// ========================= NOTIFICATIONS / PORTAL =========================
+
+model NotificationTemplate {
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String? @map("tenant_id") @db.Uuid
+  code     String
+  channel  String  // whatsapp|sms|email|push
+  subject  String?
+  body     String
+
+  @@unique([tenantId, code, channel])
+  @@map("notification_templates")
+}
+
+model Notification {
+  id           BigInt   @id @default(autoincrement())
+  tenantId     String   @map("tenant_id") @db.Uuid
+  userId       String?  @map("user_id") @db.Uuid
+  clientId     String?  @map("client_id") @db.Uuid
+  channel      String
+  templateCode String?  @map("template_code")
+  payload      Json?
+  status       String   @default("queued") // queued|sent|failed|read
+  error        String?
+  sentAt       DateTime? @map("sent_at")
+  readAt       DateTime? @map("read_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, status])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @map("tenant_id") @db.Uuid
+  userId   String? @map("user_id") @db.Uuid
+  clientId String? @map("client_id") @db.Uuid
+  channel  String
+  event    String
+  enabled  Boolean @default(true)
+
+  @@map("notification_preferences")
+}
+
+model SupportTicket {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  clientId  String   @map("client_id") @db.Uuid
+  subject   String
+  status    String   @default("open")
+  priority  String   @default("normal")
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  resolvedAt DateTime? @map("resolved_at")
+  messages TicketMessage[]
+
+  @@map("support_tickets")
+}
+
+model TicketMessage {
+  id           BigInt   @id @default(autoincrement())
+  tenantId     String   @map("tenant_id") @db.Uuid
+  ticketId     String   @map("ticket_id") @db.Uuid
+  authorUserId String?  @map("author_user_id") @db.Uuid
+  body         String
+  mediaFileId  String?  @map("media_file_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+  ticket SupportTicket @relation(fields: [ticketId], references: [id])
+
+  @@map("ticket_messages")
+}
+
+model Announcement {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  title       String
+  body        String?
+  audience    String   @default("all_clients")
+  publishedAt DateTime? @map("published_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("announcements")
+}
+
+// ========================= AUDIT / ANALYTICS =========================
+
+model AuditLog {
+  id          BigInt   @id @default(autoincrement())
+  tenantId    String?  @map("tenant_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String
+  entityType  String?  @map("entity_type")
+  entityId    String?  @map("entity_id") @db.Uuid
+  before      Json?
+  after       Json?
+  ip          String?
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model ActivityLog {
+  id        BigInt   @id @default(autoincrement())
+  tenantId  String?  @map("tenant_id") @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  event     String?
+  meta      Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("activity_logs")
+}
+
+model AnalyticsDailyRollup {
+  id            BigInt   @id @default(autoincrement())
+  tenantId      String   @map("tenant_id") @db.Uuid
+  day           DateTime @db.Date
+  clientId      String?  @map("client_id") @db.Uuid
+  categoryId    String?  @map("category_id") @db.Uuid
+  workerId      String?  @map("worker_id") @db.Uuid
+  pickups       Int      @default(0)
+  deliveries    Int      @default(0)
+  clothCount    Int      @default(0) @map("cloth_count")
+  missingCount  Int      @default(0) @map("missing_count")
+  damagedCount  Int      @default(0) @map("damaged_count")
+  revenuePaise  BigInt   @default(0) @map("revenue_paise")
+  avgTatMinutes Int?     @map("avg_tat_minutes")
+
+  @@unique([tenantId, day, clientId, categoryId, workerId])
+  @@index([tenantId, day])
+  @@map("analytics_daily_rollups")
+}
