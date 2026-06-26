@@ -1,0 +1,41 @@
+:root {
+  --primary: #0b5394;
+  --primary-light: #e8f0fe;
+  --danger: #d73a4a;
+  --warning: #f59e0b;
+  --success: #28a745;
+  --bg: #f5f7fa;
+  --card: #ffffff;
+  --text: #1a1a1a;
+  --text-muted: #6b7280;
+  --border: #e5e7eb;
+  --radius: 12px;
+  --tap: 48px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); font-size: 16px; }
+button { min-height: var(--tap); border: none; border-radius: 8px; font-size: 16px; cursor: pointer; padding: 0 16px; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:active { transform: scale(0.97); }
+.btn-outline { background: transparent; border: 2px solid var(--primary); color: var(--primary); }
+.btn-danger { background: var(--danger); color: #fff; }
+.card { background: var(--card); border-radius: var(--radius); padding: 16px; margin: 8px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.badge-hotel { background: #e8f0fe; color: #0b5394; }
+.badge-hostel { background: #fef3c7; color: #92400e; }
+.badge-pg { background: #d1fae5; color: #065f46; }
+.badge-school { background: #ede9fe; color: #5b21b6; }
+.badge-coaching { background: #fce7f3; color: #9f1239; }
+.badge-warning { background: #fef3c7; color: #92400e; }
+.badge-danger { background: #fee2e2; color: #991b1b; }
+.badge-success { background: #d1fae5; color: #065f46; }
+.bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: var(--card); border-top: 1px solid var(--border); padding: 4px 0; z-index: 100; }
+.bottom-nav a { flex: 1; text-align: center; padding: 8px; text-decoration: none; color: var(--text-muted); font-size: 12px; }
+.bottom-nav a.active { color: var(--primary); font-weight: 600; }
+.stepper { display: flex; align-items: center; gap: 8px; }
+.stepper button { width: 40px; height: 40px; border-radius: 8px; font-size: 20px; background: var(--primary-light); color: var(--primary); }
+.stepper input { width: 60px; text-align: center; font-size: 18px; border: 2px solid var(--border); border-radius: 8px; height: 40px; }
+.offline-banner { background: var(--warning); color: #fff; text-align: center; padding: 6px; font-size: 13px; }
+.app-header { background: var(--primary); color: #fff; padding: 12px 16px; font-size: 18px; font-weight: 600; position: sticky; top: 0; z-index: 50; }
+.total-bar { position: sticky; bottom: 56px; background: var(--card); border-top: 2px solid var(--primary); padding: 12px 16px; font-size: 18px; font-weight: 700; display: flex; justify-content: space-between; }
